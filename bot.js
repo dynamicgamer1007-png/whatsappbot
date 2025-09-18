@@ -4,7 +4,7 @@ import fetch from "node-fetch";
 
 const { Client, LocalAuth } = pkg;
 
-// 🔑 Gemini API key from environment (GitHub Secrets)
+// Gemini API key from GitHub Secrets
 const GEMINI_KEY = process.env.GEMINI_API_KEY;
 
 if (!GEMINI_KEY) {
@@ -12,7 +12,7 @@ if (!GEMINI_KEY) {
   process.exit(1);
 }
 
-// WhatsApp Client with Puppeteer args for no-sandbox
+// WhatsApp client
 const client = new Client({
   authStrategy: new LocalAuth(),
   puppeteer: {
@@ -29,7 +29,7 @@ const client = new Client({
   },
 });
 
-// Terminal QR code
+// Show QR in terminal
 client.on("qr", (qr) => {
   console.log("📱 Scan this QR code to connect WhatsApp:");
   qrcode.generate(qr, { small: true });
@@ -40,18 +40,19 @@ client.on("ready", () => {
   console.log("✅ WhatsApp Bot is ready!");
 });
 
-// Handle incoming messages
+// Handle messages
 client.on("message", async (msg) => {
   console.log(`🔥 MESSAGE: "${msg.body}" FROM: ${msg.from}`);
 
   try {
     const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash-latest:generateContent?key=${GEMINI_KEY}`,
+      `https://generativelanguage.googleapis.com/v1/models/gemini-2.0-flash:generateContent?key=${GEMINI_KEY}`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           contents: [{ parts: [{ text: msg.body }] }],
+          generationConfig: { maxOutputTokens: 150, temperature: 0.8 },
         }),
       }
     );
@@ -72,5 +73,5 @@ client.on("message", async (msg) => {
   }
 });
 
-// Initialize the bot
+// Initialize WhatsApp bot
 client.initialize();
