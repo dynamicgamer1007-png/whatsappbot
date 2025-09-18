@@ -1,17 +1,20 @@
 {
-  "name": "desi-whatsapp-bot",
+  "name": "whatsapp-bot",
   "version": "1.0.0",
+  "description": "Desi Sarcastic WhatsApp Bot",
   "main": "bot.js",
+  "type": "commonjs",
   "scripts": {
     "start": "node bot.js"
   },
-  "engines": {
-    "node": ">=16.0.0"
-  },
   "dependencies": {
-    "whatsapp-web.js": "^1.23.0",
+    "whatsapp-web.js": "^2.10.0",
+    "express": "^4.18.2",
+    "node-fetch": "^3.4.0",
     "qrcode-terminal": "^0.12.0",
-    "node-fetch": "^2.6.7",
-    "express": "^4.18.2"
+    "puppeteer": "^21.0.1"
+  },
+  "engines": {
+    "node": ">=24.0.0"
   }
 }
