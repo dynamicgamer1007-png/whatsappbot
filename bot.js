@@ -1,8 +1,13 @@
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
 
-// Environment variables for deployment
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY || 'AIzaSyD3E9g8uqvrIUhQHYueQXWx20Mcq52vRFY';
+// Environment variables for deployment - REMOVED HARDCODED KEY
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY; // No default value!
+
+if (!GEMINI_API_KEY) {
+  console.error('❌ GEMINI_API_KEY environment variable is required!');
+  process.exit(1);
+}
 
 // Enhanced client for cloud deployment
 const client = new Client({
@@ -32,11 +37,13 @@ const client = new Client({
 });
 
 let isReady = false;
+let qrString = null;
 
 client.on('qr', qr => {
   console.log('📱 QR CODE GENERATED - Scan this:');
   qrcode.generate(qr, { small: true });
   console.log('🔗 You can also scan using WhatsApp Web');
+  qrString = qr; // Store QR string for web display
 });
 
 client.on('ready', () => {
@@ -53,7 +60,7 @@ client.on('auth_failure', msg => {
 });
 
 client.on('disconnected', (reason) => {
-  console.log('🔌 Disconnected:', reason);
+  console.log('📌 Disconnected:', reason);
   isReady = false;
   
   // Auto-reconnect after 5 seconds
@@ -68,7 +75,7 @@ client.on('message', async msg => {
   // Skip own messages and status updates
   if (msg.fromMe || msg.from === 'status@broadcast') return;
   
-  console.log(`📥 MESSAGE: "${msg.body}" FROM: ${msg.from}`);
+  console.log(`🔥 MESSAGE: "${msg.body}" FROM: ${msg.from}`);
   
   try {
     // Call Gemini API
@@ -150,12 +157,94 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.get('/', (req, res) => {
-  res.json({ 
-    status: 'Bot is running',
-    ready: isReady,
-    uptime: process.uptime(),
-    timestamp: new Date().toISOString()
-  });
+  if (qrString && !isReady) {
+    // Show QR code on webpage
+    res.send(`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>WhatsApp Bot - Scan QR</title>
+        <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
+        <style>
+          body { 
+            font-family: Arial, sans-serif; 
+            text-align: center; 
+            padding: 50px;
+            background: #0a0a0a;
+            color: white;
+          }
+          .container { 
+            max-width: 500px; 
+            margin: 0 auto; 
+            background: #1a1a1a;
+            padding: 30px;
+            border-radius: 10px;
+          }
+          #qr-code { margin: 20px 0; }
+          .status { 
+            font-size: 18px; 
+            color: #25D366; 
+            margin: 20px 0; 
+          }
+          .instructions {
+            color: #888;
+            margin: 20px 0;
+            line-height: 1.5;
+          }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <h1>🤖 Desi Sarcastic WhatsApp Bot</h1>
+          <div class="status">📱 Scan QR Code to Connect</div>
+          <div id="qr-code"></div>
+          <div class="instructions">
+            <p><strong>How to scan:</strong></p>
+            <p>1. Open WhatsApp on your phone</p>
+            <p>2. Go to Settings → Linked Devices</p>
+            <p>3. Tap "Link a Device"</p>
+            <p>4. Scan this QR code</p>
+          </div>
+          <p><em>Page will auto-refresh when connected</em></p>
+        </div>
+        <script>
+          // Generate QR code
+          QRCode.toCanvas(document.getElementById('qr-code'), '${qrString}', {
+            width: 300,
+            margin: 2,
+            color: {
+              dark: '#000000',
+              light: '#FFFFFF'
+            }
+          });
+          
+          // Auto refresh every 10 seconds to check connection
+          setTimeout(() => {
+            window.location.reload();
+          }, 10000);
+        </script>
+      </body>
+      </html>
+    `);
+  } else if (isReady) {
+    // Bot is connected
+    res.json({ 
+      status: '✅ Bot is connected and running!',
+      ready: isReady,
+      message: 'WhatsApp bot is active. Send messages to test!',
+      uptime: process.uptime(),
+      timestamp: new Date().toISOString()
+    });
+  } else {
+    // Starting up
+    res.json({ 
+      status: 'Bot is starting up...',
+      ready: isReady,
+      message: 'Please wait, generating QR code...',
+      uptime: process.uptime(),
+      timestamp: new Date().toISOString()
+    });
+  }
 });
 
 app.get('/health', (req, res) => {
@@ -205,6 +294,6 @@ process.on('unhandledRejection', (reason, promise) => {
 
 // Start the bot
 console.log('🚀 Starting Desi Sarcastic WhatsApp Bot...');
-console.log('🔑 Using Gemini API key:', GEMINI_API_KEY ? 'Set' : 'Missing');
+console.log('🔐 Using Gemini API key:', GEMINI_API_KEY ? 'Set' : 'Missing');
 
 client.initialize();
