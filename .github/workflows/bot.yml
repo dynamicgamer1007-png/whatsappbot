@@ -1,4 +1,4 @@
-name: Run WhatsApp Bot
+name: WhatsApp Bot
 
 on:
   push:
@@ -7,22 +7,18 @@ on:
   workflow_dispatch:
 
 jobs:
-  bot:
+  build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Repo
-        uses: actions/checkout@v3
+      - uses: actions/checkout@v3
 
       - name: Setup Node.js
         uses: actions/setup-node@v3
         with:
-          node-version: 24
+          node-version: 20   # ✅ Node 20 has fetch built-in
 
-      - name: Install Dependencies
+      - name: Install dependencies
         run: npm install
 
-      - name: Run Bot
-        env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          PORT: 3000
-        run: npm start
+      - name: Start bot
+        run: node bot.js
