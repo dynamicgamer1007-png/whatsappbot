@@ -1,0 +1,5 @@
+node_modules/
+whatsapp-session/
+.wwebjs_auth/
+.env
+npm-debug.log*
