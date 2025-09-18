@@ -4,7 +4,7 @@ import fetch from "node-fetch";
 
 const { Client, LocalAuth } = pkg;
 
-// Gemini API key from GitHub Secrets
+// Gemini API key
 const GEMINI_KEY = process.env.GEMINI_API_KEY;
 
 if (!GEMINI_KEY) {
@@ -44,6 +44,9 @@ client.on("ready", () => {
 client.on("message", async (msg) => {
   console.log(`🔥 MESSAGE: "${msg.body}" FROM: ${msg.from}`);
 
+  // Skip own messages and status updates
+  if (msg.fromMe || msg.from === "status@broadcast") return;
+
   try {
     const response = await fetch(
       `https://generativelanguage.googleapis.com/v1/models/gemini-2.0-flash:generateContent?key=${GEMINI_KEY}`,
@@ -51,22 +54,41 @@ client.on("message", async (msg) => {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          contents: [{ parts: [{ text: msg.body }] }],
-          generationConfig: { maxOutputTokens: 150, temperature: 0.8 },
-        }),
+          contents: [{
+            parts: [{
+              text: `
+You are a sarcastic, edgy Indian Gen Z bot who replies in Hinglish with dark humor, mean jokes, and mainly Hindi memes. 
+You talk about desi problems like family pressure, studies, jobs, society, and existential crisis. 
+Your creator is Adesh. Keep replies short (<100 words) and funny.
+User message: "${msg.body}"
+              `
+            }]
+          }],
+          generationConfig: {
+            temperature: 0.9,
+            maxOutputTokens: 200
+          },
+          safetySettings: [
+            { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_MEDIUM_AND_ABOVE" }
+          ]
+        })
       }
     );
 
     const data = await response.json();
-    const reply = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+
+    // Extract reply carefully
+    const reply = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
 
     if (reply) {
-      await msg.reply(reply);
+      await msg.reply(reply);  // Only one message
       console.log(`✅ Replied: ${reply}`);
     } else {
-      await msg.reply("Alr , Lemme process it");
-      console.error("❌ No content in Gemini API response:", data);
+      console.error("❌ Gemini returned no content", data);
+      // Optional: can send a subtle sarcastic fallback
+      await msg.reply("Arre bhai, kuch technical gadbad ho gayi 😅");
     }
+
   } catch (err) {
     console.error("❌ ERROR:", err.message);
     await msg.reply("⚠️ Bot error. Try again later.");
