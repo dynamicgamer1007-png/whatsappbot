@@ -2,7 +2,7 @@
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
 const express = require('express');
-const fetch = (await import('node-fetch')).default;
+const fetch = require('node-fetch'); // Fixed for CommonJS
 
 // Environment variable for Gemini API
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
