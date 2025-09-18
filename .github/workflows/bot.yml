@@ -7,18 +7,25 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
+  run-bot:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      # Checkout the repo
+      - name: Checkout Repository
+        uses: actions/checkout@v3
 
+      # Setup Node.js environment
       - name: Setup Node.js
         uses: actions/setup-node@v3
         with:
-          node-version: 20   # ✅ Node 20 has fetch built-in
+          node-version: 20
 
-      - name: Install dependencies
+      # Install dependencies
+      - name: Install Dependencies
         run: npm install
 
-      - name: Start bot
-        run: node bot.js
+      # Run the WhatsApp bot
+      - name: Start WhatsApp Bot
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: npm start
