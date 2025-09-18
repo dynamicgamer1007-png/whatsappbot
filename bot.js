@@ -64,7 +64,7 @@ client.on("message", async (msg) => {
       await msg.reply(reply);
       console.log(`✅ Replied: ${reply}`);
     } else {
-      await msg.reply("⚠️ Gemini API returned no response.");
+      await msg.reply("Alr , Lemme process it");
       console.error("❌ No content in Gemini API response:", data);
     }
   } catch (err) {
