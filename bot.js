@@ -2,12 +2,12 @@
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
 const express = require('express');
-const fetch = require('node-fetch'); // Fixed for CommonJS
+const fetch = require('node-fetch'); // CommonJS
 
-// Environment variable for Gemini API
+// Gemini API key
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 if (!GEMINI_API_KEY) {
-  console.error('❌ GEMINI_API_KEY environment variable is required!');
+  console.error('❌ GEMINI_API_KEY is required!');
   process.exit(1);
 }
 
@@ -23,7 +23,6 @@ const client = new Client({
   }),
   puppeteer: {
     headless: true,
-    executablePath: '/usr/bin/google-chrome', // Use system Chrome on Render
     args: [
       '--no-sandbox',
       '--disable-setuid-sandbox',
@@ -47,53 +46,46 @@ const client = new Client({
 let isReady = false;
 let qrString = null;
 
-// ---------------- QR EVENT ----------------
+// ---------------- QR Event ----------------
 client.on('qr', qr => {
-  console.log('📱 QR GENERATED:', qr);
+  console.log('📱 QR GENERATED:');
   qrcode.generate(qr, { small: true });
   qrString = qr;
 });
 
-// ---------------- READY ----------------
+// ---------------- Ready ----------------
 client.on('ready', () => {
-  console.log('✅ WhatsApp Bot is Ready and Connected!');
+  console.log('✅ WhatsApp Bot is Ready!');
   isReady = true;
 });
 
-// ---------------- AUTH ----------------
-client.on('authenticated', () => {
-  console.log('✅ WhatsApp Authenticated Successfully!');
-});
-
-client.on('auth_failure', msg => {
-  console.error('❌ Authentication Failed:', msg);
-});
+// ---------------- Auth ----------------
+client.on('authenticated', () => console.log('✅ Authenticated!'));
+client.on('auth_failure', msg => console.error('❌ Auth failure:', msg));
 
 client.on('disconnected', reason => {
   console.log('📌 Disconnected:', reason);
   isReady = false;
   setTimeout(() => {
-    console.log('🔄 Attempting to reconnect...');
+    console.log('🔄 Reconnecting...');
     client.initialize();
   }, 5000);
 });
 
-// ---------------- MESSAGE HANDLER ----------------
+// ---------------- Message Handler ----------------
 client.on('message', async msg => {
   if (msg.fromMe || msg.from === 'status@broadcast') return;
   console.log(`🔥 MESSAGE: "${msg.body}" FROM: ${msg.from}`);
 
   try {
-    const geminiResponse = await fetch(
-      `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`, 
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           contents: [{
-            parts: [{
-              text: `You are a sarcastic Indian Gen Z bot speaking Hinglish, memes, and dark humor. Reply to: ${msg.body}`
-            }]
+            parts: [{ text: `You are a sarcastic Indian Gen Z bot replying to: ${msg.body}` }]
           }],
           generationConfig: { temperature: 0.8, maxOutputTokens: 150 },
           safetySettings: [{ category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_MEDIUM_AND_ABOVE" }]
@@ -101,40 +93,31 @@ client.on('message', async msg => {
       }
     );
 
-    if (!geminiResponse.ok) {
-      const errBody = await geminiResponse.text();
-      throw new Error(`Gemini API error ${geminiResponse.status}: ${errBody}`);
-    }
+    if (!response.ok) throw new Error(`Gemini API ${response.status}`);
 
-    const geminiData = await geminiResponse.json();
-    let aiReply = geminiData?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+    const data = await response.json();
+    let reply = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || 
+                'Bhai technical issues chal rahe hain... thoda wait karo 😅';
 
-    if (!aiReply) {
-      aiReply = 'Bhai technical issues chal rahe hain... thoda wait karo 😅';
-    } else if (aiReply.length > 1000) {
-      aiReply = aiReply.substring(0, 997) + '...';
-    }
+    if (reply.length > 1000) reply = reply.substring(0, 997) + '...';
 
-    console.log(`🤖 AI REPLY: ${aiReply}`);
-    await msg.reply(aiReply);
-    console.log('✅ REPLY SENT!');
-  } catch (error) {
-    console.error('❌ ERROR:', error.message);
-    const errorReplies = [
-      'Yaar server hang ho gaya... IT wale ko call karna padega 😩',
-      'Error aa gaya bhai... main bhi engineer hun, kya expect kiya tha? 💀',
-      'Technical difficulties... matlab main bhi confused hun 🤡',
-      'API crash ho gayi... Monday blues even for bots 📉'
+    console.log(`🤖 AI REPLY: ${reply}`);
+    await msg.reply(reply);
+  } catch (err) {
+    console.error('❌ ERROR:', err.message);
+    const errors = [
+      'Server hang ho gaya... 😩',
+      'Error aa gaya bhai 💀',
+      'Technical difficulties 🤡',
+      'API crash Monday blues 📉'
     ];
-    const randomReply = errorReplies[Math.floor(Math.random() * errorReplies.length)];
-    try { await msg.reply(randomReply); } catch { }
+    try { await msg.reply(errors[Math.floor(Math.random()*errors.length)]); } catch {}
   }
 });
 
-// ---------------- EXPRESS WEB ENDPOINT ----------------
+// ---------------- Express Routes ----------------
 app.get('/', (req, res) => {
   if (qrString && !isReady) {
-    // Show QR code
     res.send(`
       <!DOCTYPE html>
       <html>
@@ -142,8 +125,8 @@ app.get('/', (req, res) => {
         <title>WhatsApp Bot - Scan QR</title>
         <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
         <style>
-          body { font-family: Arial; text-align: center; padding: 50px; background:#0a0a0a; color:white; }
-          .container { max-width: 500px; margin:0 auto; padding:30px; border-radius:10px; background:#1a1a1a;}
+          body { font-family: Arial; text-align:center; padding:50px; background:#0a0a0a; color:white; }
+          .container { max-width:500px; margin:0 auto; padding:30px; border-radius:10px; background:#1a1a1a; }
           #qr-code { margin:20px 0; }
           .status { font-size:18px; color:#25D366; margin:20px 0; }
           .instructions { color:#888; margin:20px 0; line-height:1.5; }
@@ -161,36 +144,38 @@ app.get('/', (req, res) => {
           </div>
         </div>
         <script>
-          QRCode.toCanvas(document.getElementById('qr-code'), '${qrString}', { width: 300, margin:2, color:{dark:'#000000',light:'#FFFFFF'} });
+          QRCode.toCanvas(document.getElementById('qr-code'), '${qrString}', {
+            width:300, margin:2, color:{dark:'#000', light:'#fff'}
+          });
           setInterval(()=>{ location.reload(); },10000);
         </script>
       </body>
       </html>
     `);
   } else if (isReady) {
-    res.json({ status: '✅ Bot is connected!', ready: isReady, uptime: process.uptime(), timestamp: new Date().toISOString() });
+    res.json({ status:'✅ Bot connected!', ready:isReady, uptime:process.uptime(), timestamp:new Date().toISOString() });
   } else {
-    res.json({ status: 'Bot starting...', ready: isReady, uptime: process.uptime(), timestamp: new Date().toISOString() });
+    res.json({ status:'Bot starting...', ready:isReady, uptime:process.uptime(), timestamp:new Date().toISOString() });
   }
 });
 
 app.get('/health', (req, res) => {
-  res.json({ status:'healthy', whatsapp:isReady?'connected':'connecting', memory: process.memoryUsage(), uptime: process.uptime() });
+  res.json({ status:'healthy', whatsapp:isReady?'connected':'connecting', memory:process.memoryUsage(), uptime:process.uptime() });
 });
 
-app.listen(PORT, () => console.log(`🌐 Health server running on port ${PORT}`));
+app.listen(PORT, () => console.log(`🌐 Server running on port ${PORT}`));
 
-// ---------------- GRACEFUL SHUTDOWN ----------------
-['SIGINT','SIGTERM'].forEach(signal=>{
-  process.on(signal, async ()=>{
-    console.log(`🛑 ${signal} received, shutting down...`);
+// ---------------- Graceful Shutdown ----------------
+['SIGINT','SIGTERM'].forEach(sig=>{
+  process.on(sig, async ()=>{
+    console.log(`🛑 ${sig} received, shutting down...`);
     try { await client.destroy(); } catch(e){ console.error(e); }
     process.exit(0);
   });
 });
 
 process.on('uncaughtException', e => console.error('💥 Uncaught Exception:', e.message));
-process.on('unhandledRejection', (r)=>console.error('💥 Unhandled Rejection:', r));
+process.on('unhandledRejection', r => console.error('💥 Unhandled Rejection:', r));
 
 console.log('🚀 Starting Desi Sarcastic WhatsApp Bot...');
 client.initialize();
