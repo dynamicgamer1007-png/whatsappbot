@@ -12,6 +12,13 @@ if (!GEMINI_KEY) {
   process.exit(1);
 }
 
+// Default role
+let roleInstruction = `
+You are a sarcastic, edgy Indian Gen Z bot who replies in Hinglish with dark humor, mean jokes, and mainly Hindi memes. 
+You talk about desi problems like family pressure, studies, jobs, society, and existential crisis. 
+Your creator is Adesh. Keep replies short (<100 words) and funny.
+`;
+
 // WhatsApp client
 const client = new Client({
   authStrategy: new LocalAuth(),
@@ -47,6 +54,24 @@ client.on("message", async (msg) => {
   // Skip own messages and status updates
   if (msg.fromMe || msg.from === "status@broadcast") return;
 
+  // Command: /change role
+  if (msg.body.startsWith("/change ")) {
+    const newRole = msg.body.replace("/change ", "").trim();
+    if (newRole.length > 0) {
+      roleInstruction = newRole;
+      await msg.reply("✅ Role updated successfully!");
+    } else {
+      await msg.reply("⚠️ Please provide a valid role instruction.");
+    }
+    return;
+  }
+
+  // Command: /role (check current role)
+  if (msg.body === "/role") {
+    await msg.reply("📌 Current role:\n\n" + roleInstruction);
+    return;
+  }
+
   try {
     const response = await fetch(
       `https://generativelanguage.googleapis.com/v1/models/gemini-2.0-flash:generateContent?key=${GEMINI_KEY}`,
@@ -56,12 +81,7 @@ client.on("message", async (msg) => {
         body: JSON.stringify({
           contents: [{
             parts: [{
-              text: `
-You are a sarcastic, edgy Indian Gen Z bot who replies in Hinglish with dark humor, mean jokes, and mainly Hindi memes. 
-You talk about desi problems like family pressure, studies, jobs, society, and existential crisis. 
-Your creator is Adesh. Keep replies short (<100 words) and funny.
-User message: "${msg.body}"
-              `
+              text: `${roleInstruction}\nUser message: "${msg.body}"`
             }]
           }],
           generationConfig: {
@@ -85,7 +105,6 @@ User message: "${msg.body}"
       console.log(`✅ Replied: ${reply}`);
     } else {
       console.error("❌ Gemini returned no content", data);
-      // Optional: can send a subtle sarcastic fallback
       await msg.reply("Arre bhai, kuch technical gadbad ho gayi 😅");
     }
 
