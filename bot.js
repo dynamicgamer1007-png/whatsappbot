@@ -12,12 +12,9 @@ if (!GEMINI_KEY) {
   process.exit(1);
 }
 
-// Default role
-let roleInstruction = `
-You are a sarcastic, edgy Indian Gen Z bot who replies in Hinglish with dark humor, mean jokes, and mainly Hindi memes. 
-You talk about desi problems like family pressure, studies, jobs, society, and existential crisis. 
-Your creator is Adesh. Keep replies short (<100 words) and funny.
-`;
+// Memory for context
+const userMemory = new Map(); // { userId: [msg1, msg2, ...] }
+const botActive = new Map();  // { chatId: true/false }
 
 // WhatsApp client
 const client = new Client({
@@ -54,25 +51,34 @@ client.on("message", async (msg) => {
   // Skip own messages and status updates
   if (msg.fromMe || msg.from === "status@broadcast") return;
 
-  // Command: /change role
-  if (msg.body.startsWith("/change ")) {
-    const newRole = msg.body.replace("/change ", "").trim();
-    if (newRole.length > 0) {
-      roleInstruction = newRole;
-      await msg.reply("✅ Role updated successfully!");
-    } else {
-      await msg.reply("⚠️ Please provide a valid role instruction.");
-    }
+  const chatId = msg.from;
+
+  // ON/OFF Commands
+  if (msg.body.toLowerCase() === "/bot off") {
+    botActive.set(chatId, false);
+    await msg.reply("🤐 Okay, I’ll stay quiet here.");
+    return;
+  }
+  if (msg.body.toLowerCase() === "/bot on") {
+    botActive.set(chatId, true);
+    await msg.reply("🔥 Bot is back online! What’s up?");
     return;
   }
 
-  // Command: /role (check current role)
-  if (msg.body === "/role") {
-    await msg.reply("📌 Current role:\n\n" + roleInstruction);
-    return;
-  }
+  // If bot is OFF in this chat → ignore
+  if (botActive.get(chatId) === false) return;
+
+  // Save user message in memory
+  if (!userMemory.has(chatId)) userMemory.set(chatId, []);
+  const history = userMemory.get(chatId);
+  history.push(`User: ${msg.body}`);
+  if (history.length > 5) history.shift(); // keep only last 5
+  userMemory.set(chatId, history);
 
   try {
+    // Build context
+    const contextText = history.join("\n");
+
     const response = await fetch(
       `https://generativelanguage.googleapis.com/v1/models/gemini-2.0-flash:generateContent?key=${GEMINI_KEY}`,
       {
@@ -81,31 +87,38 @@ client.on("message", async (msg) => {
         body: JSON.stringify({
           contents: [{
             parts: [{
-              text: `${roleInstruction}\nUser message: "${msg.body}"`
+              text: `
+You are a helpful, professional WhatsApp bot created by Adesh.
+You always respect the user, keep responses clear and under 100 words.
+Here is the recent conversation history for context:
+${contextText}
+Now reply to the latest user message: "${msg.body}"
+              `
             }]
           }],
           generationConfig: {
-            temperature: 0.9,
+            temperature: 0.7,
             maxOutputTokens: 200
-          },
-          safetySettings: [
-            { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_MEDIUM_AND_ABOVE" }
-          ]
+          }
         })
       }
     );
 
     const data = await response.json();
 
-    // Extract reply carefully
     const reply = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
 
     if (reply) {
-      await msg.reply(reply);  // Only one message
+      // Save bot reply to memory too
+      history.push(`Bot: ${reply}`);
+      if (history.length > 5) history.shift();
+      userMemory.set(chatId, history);
+
+      await msg.reply(reply);
       console.log(`✅ Replied: ${reply}`);
     } else {
       console.error("❌ Gemini returned no content", data);
-      await msg.reply("Arre bhai, kuch technical gadbad ho gayi 😅");
+      await msg.reply("⚠️ No response from AI, try again later.");
     }
 
   } catch (err) {
