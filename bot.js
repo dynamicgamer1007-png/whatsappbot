@@ -3,17 +3,29 @@ import pkg from "whatsapp-web.js";
 import fetch from "node-fetch";
 import fs from "fs";
 import path from "path";
-import gTTS from "google-tts-api";
 
 const { Client, LocalAuth, MessageMedia } = pkg;
 
-// Gemini API key
+// Gemini API key from GitHub Secrets or env
 const GEMINI_KEY = process.env.GEMINI_API_KEY;
-
 if (!GEMINI_KEY) {
   console.error("❌ ERROR: GEMINI_API_KEY not set!");
   process.exit(1);
 }
+
+// Bot state
+let botActive = true;
+let currentRole = `You are a professional, respectful AI bot who answers politely.`;
+
+// Optional GIF & Sticker toggles
+let gifMode = true;
+let stickerMode = true;
+
+// Sample Indian meme GIFs
+const memes = [
+  "https://media.giphy.com/media/3o6Zt481isNVuQI1l6/giphy.gif",
+  "https://media.giphy.com/media/26BRv0ThflsHCqDrG/giphy.gif",
+];
 
 // WhatsApp client
 const client = new Client({
@@ -32,7 +44,7 @@ const client = new Client({
   },
 });
 
-// Show QR in terminal
+// QR Code
 client.on("qr", (qr) => {
   console.log("📱 Scan this QR code to connect WhatsApp:");
   qrcode.generate(qr, { small: true });
@@ -43,93 +55,113 @@ client.on("ready", () => {
   console.log("✅ WhatsApp Bot is ready!");
 });
 
-// Generate Google TTS audio
-async function generateTTS(text, lang = "en") {
-  try {
-    const url = gTTS.getAudioUrl(text, {
-      lang: lang,
-      slow: false,
-      host: "https://translate.google.com",
-    });
-
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(`TTS failed with status ${res.status}`);
-
-    const buffer = Buffer.from(await res.arrayBuffer());
-    const fileName = `./temp_${Date.now()}.mp3`;
-    fs.writeFileSync(fileName, buffer);
-    return fileName;
-  } catch (err) {
-    console.error("❌ TTS ERROR:", err.message);
-    return null;
-  }
-}
-
 // Handle messages
 client.on("message", async (msg) => {
   console.log(`🔥 MESSAGE: "${msg.body}" FROM: ${msg.from}`);
 
-  // Skip own messages and status updates
   if (msg.fromMe || msg.from === "status@broadcast") return;
 
-  try {
-    // /say command triggers TTS
-    if (msg.body.startsWith("/say ")) {
-      const textToSay = msg.body.replace("/say ", "").trim();
-      if (!textToSay) return;
+  const body = msg.body.trim();
 
-      const audioFile = await generateTTS(textToSay, "en"); // "hi" for Hindi
-      if (audioFile) {
-        const media = MessageMedia.fromFilePath(audioFile);
-        await msg.reply(media);
-        fs.unlinkSync(audioFile); // delete temp file
-        console.log("✅ Sent TTS voice note for /say command");
+  // Commands
+  if (body.startsWith("/off")) {
+    botActive = false;
+    await msg.reply("⚠️ Bot is now turned OFF.");
+    return;
+  }
+  if (body.startsWith("/on")) {
+    botActive = true;
+    await msg.reply("✅ Bot is now turned ON.");
+    return;
+  }
+  if (body.startsWith("/change ")) {
+    currentRole = body.replace("/change ", "").trim();
+    await msg.reply(`🎭 Bot role changed!`);
+    return;
+  }
+
+  // TTS
+  if (body.startsWith("/say ")) {
+    if (!botActive) return;
+    const text = body.replace("/say ", "").trim();
+    try {
+      const ttsResponse = await fetch(`https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(text)}&tl=en&client=tw-ob`);
+      const buffer = Buffer.from(await ttsResponse.arrayBuffer());
+      const media = new MessageMedia("audio/mpeg", buffer.toString("base64"), "say.mp3");
+      await msg.reply(media);
+    } catch (err) {
+      console.error("❌ TTS ERROR:", err.message);
+      await msg.reply("⚠️ TTS failed.");
+    }
+    return;
+  }
+
+  // /sticker command
+  if (stickerMode && body.startsWith("/sticker")) {
+    try {
+      let media;
+      if (msg.hasMedia) {
+        const attachment = await msg.downloadMedia();
+        media = new MessageMedia(attachment.mimetype, attachment.data, "sticker");
+      } else {
+        const text = body.replace("/sticker", "").trim() || " ";
+        const imgBuffer = fs.readFileSync(path.join("placeholder.png")); // optional: a small template
+        media = new MessageMedia("image/png", imgBuffer.toString("base64"), "sticker");
       }
+      await msg.reply(media);
+      return;
+    } catch (err) {
+      console.error("❌ STICKER ERROR:", err.message);
+      await msg.reply("⚠️ Failed to create sticker.");
       return;
     }
+  }
 
-    // Otherwise, normal Gemini AI response
+  // /gif command
+  if (gifMode && body.startsWith("/gif ")) {
+    try {
+      const query = body.replace("/gif ", "").trim();
+      const gifUrl = memes[Math.floor(Math.random() * memes.length)]; // placeholder: random meme
+      await msg.reply(gifUrl);
+      return;
+    } catch (err) {
+      console.error("❌ GIF ERROR:", err.message);
+      await msg.reply("⚠️ Failed to fetch GIF.");
+      return;
+    }
+  }
+
+  // Skip AI responses if bot is off
+  if (!botActive) return;
+
+  // Call Gemini API for AI response
+  try {
     const response = await fetch(
       `https://generativelanguage.googleapis.com/v1/models/gemini-2.0-flash:generateContent?key=${GEMINI_KEY}`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          contents: [{
-            parts: [{
-              text: `
-You are a professional, respectful AI bot. Reply concisely and clearly.
-User message: "${msg.body}"
-              `
-            }]
-          }],
-          generationConfig: {
-            temperature: 0.7,
-            maxOutputTokens: 200
-          },
-          safetySettings: [
-            { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_MEDIUM_AND_ABOVE" }
-          ]
+          contents: [{ parts: [{ text: `${currentRole} User message: "${body}"` }] }],
+          generationConfig: { temperature: 0.8, maxOutputTokens: 150 },
+          safetySettings: [{ category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_MEDIUM_AND_ABOVE" }]
         })
       }
     );
-
     const data = await response.json();
     const reply = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
-
     if (reply) {
       await msg.reply(reply);
       console.log(`✅ Replied: ${reply}`);
     } else {
-      console.error("❌ Gemini returned no content", data);
-      await msg.reply("Arre bhai, kuch technical gadbad ho gayi 😅");
+      console.error("❌ No content in Gemini API response", data);
+      await msg.reply("⚠️ Gemini API no response.");
     }
-
   } catch (err) {
-    console.error("❌ ERROR:", err.message);
+    console.error("❌ Gemini ERROR:", err.message);
     await msg.reply("⚠️ Bot error. Try again later.");
   }
 });
 
-// Initialize WhatsApp bot
+// Initialize bot
 client.initialize();
