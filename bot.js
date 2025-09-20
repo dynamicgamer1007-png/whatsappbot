@@ -73,7 +73,22 @@ client.on("message", async (msg) => {
   if (msg.fromMe || msg.from === "status@broadcast") return;
 
   try {
-    // Gemini AI response
+    // /say command triggers TTS
+    if (msg.body.startsWith("/say ")) {
+      const textToSay = msg.body.replace("/say ", "").trim();
+      if (!textToSay) return;
+
+      const audioFile = await generateTTS(textToSay, "en"); // "hi" for Hindi
+      if (audioFile) {
+        const media = MessageMedia.fromFilePath(audioFile);
+        await msg.reply(media);
+        fs.unlinkSync(audioFile); // delete temp file
+        console.log("✅ Sent TTS voice note for /say command");
+      }
+      return;
+    }
+
+    // Otherwise, normal Gemini AI response
     const response = await fetch(
       `https://generativelanguage.googleapis.com/v1/models/gemini-2.0-flash:generateContent?key=${GEMINI_KEY}`,
       {
@@ -103,19 +118,8 @@ User message: "${msg.body}"
     const reply = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
 
     if (reply) {
-      // Send text reply first
       await msg.reply(reply);
       console.log(`✅ Replied: ${reply}`);
-
-      // Generate TTS and send voice note
-      const audioFile = await generateTTS(reply, "en"); // "hi" for Hindi
-      if (audioFile) {
-        const media = MessageMedia.fromFilePath(audioFile);
-        await msg.reply(media);
-        fs.unlinkSync(audioFile); // delete temp file
-        console.log("✅ Sent TTS voice note");
-      }
-
     } else {
       console.error("❌ Gemini returned no content", data);
       await msg.reply("Arre bhai, kuch technical gadbad ho gayi 😅");
