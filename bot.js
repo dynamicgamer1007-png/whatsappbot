@@ -1,8 +1,10 @@
 import qrcode from "qrcode-terminal";
 import pkg from "whatsapp-web.js";
 import fetch from "node-fetch";
+import fs from "fs";
+import path from "path";
 
-const { Client, LocalAuth } = pkg;
+const { Client, LocalAuth, MessageMedia } = pkg;
 
 // Gemini API key
 const GEMINI_KEY = process.env.GEMINI_API_KEY;
@@ -11,10 +13,6 @@ if (!GEMINI_KEY) {
   console.error("❌ ERROR: GEMINI_API_KEY not set!");
   process.exit(1);
 }
-
-// Memory for context
-const userMemory = new Map(); // { userId: [msg1, msg2, ...] }
-const botActive = new Map();  // { chatId: true/false }
 
 // WhatsApp client
 const client = new Client({
@@ -44,6 +42,28 @@ client.on("ready", () => {
   console.log("✅ WhatsApp Bot is ready!");
 });
 
+// Generate NoteGPT TTS
+async function generateTTS(text) {
+  try {
+    // NoteGPT TTS URL (female voice, default)
+    const ttsUrl = `https://notegpt.io/api/tts?voice=female&text=${encodeURIComponent(text)}`;
+
+    const res = await fetch(ttsUrl);
+    if (!res.ok) throw new Error(`TTS failed with status ${res.status}`);
+
+    const arrayBuffer = await res.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+
+    // Save temporary audio file
+    const fileName = `./temp_${Date.now()}.mp3`;
+    fs.writeFileSync(fileName, buffer);
+    return fileName;
+  } catch (err) {
+    console.error("❌ TTS ERROR:", err.message);
+    return null;
+  }
+}
+
 // Handle messages
 client.on("message", async (msg) => {
   console.log(`🔥 MESSAGE: "${msg.body}" FROM: ${msg.from}`);
@@ -51,34 +71,8 @@ client.on("message", async (msg) => {
   // Skip own messages and status updates
   if (msg.fromMe || msg.from === "status@broadcast") return;
 
-  const chatId = msg.from;
-
-  // ON/OFF Commands
-  if (msg.body.toLowerCase() === "/bot off") {
-    botActive.set(chatId, false);
-    await msg.reply("🤐 Okay, I’ll stay quiet here.");
-    return;
-  }
-  if (msg.body.toLowerCase() === "/bot on") {
-    botActive.set(chatId, true);
-    await msg.reply("🔥 Bot is back online! What’s up?");
-    return;
-  }
-
-  // If bot is OFF in this chat → ignore
-  if (botActive.get(chatId) === false) return;
-
-  // Save user message in memory
-  if (!userMemory.has(chatId)) userMemory.set(chatId, []);
-  const history = userMemory.get(chatId);
-  history.push(`User: ${msg.body}`);
-  if (history.length > 5) history.shift(); // keep only last 5
-  userMemory.set(chatId, history);
-
   try {
-    // Build context
-    const contextText = history.join("\n");
-
+    // Gemini AI response
     const response = await fetch(
       `https://generativelanguage.googleapis.com/v1/models/gemini-2.0-flash:generateContent?key=${GEMINI_KEY}`,
       {
@@ -88,37 +82,42 @@ client.on("message", async (msg) => {
           contents: [{
             parts: [{
               text: `
-You are a helpful, professional WhatsApp bot created by Adesh.
-You always respect the user, keep responses clear and under 100 words.
-Here is the recent conversation history for context:
-${contextText}
-Now reply to the latest user message: "${msg.body}"
+You are a professional, respectful AI bot. Reply concisely and clearly.
+User message: "${msg.body}"
               `
             }]
           }],
           generationConfig: {
             temperature: 0.7,
             maxOutputTokens: 200
-          }
+          },
+          safetySettings: [
+            { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_MEDIUM_AND_ABOVE" }
+          ]
         })
       }
     );
 
     const data = await response.json();
-
     const reply = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
 
     if (reply) {
-      // Save bot reply to memory too
-      history.push(`Bot: ${reply}`);
-      if (history.length > 5) history.shift();
-      userMemory.set(chatId, history);
-
+      // Send text reply first
       await msg.reply(reply);
       console.log(`✅ Replied: ${reply}`);
+
+      // Generate TTS and send voice note
+      const audioFile = await generateTTS(reply);
+      if (audioFile) {
+        const media = MessageMedia.fromFilePath(audioFile);
+        await msg.reply(media);
+        fs.unlinkSync(audioFile); // delete temp file
+        console.log("✅ Sent TTS voice note");
+      }
+
     } else {
       console.error("❌ Gemini returned no content", data);
-      await msg.reply("⚠️ No response from AI, try again later.");
+      await msg.reply("Arre bhai, kuch technical gadbad ho gayi 😅");
     }
 
   } catch (err) {
