@@ -3,6 +3,7 @@ import pkg from "whatsapp-web.js";
 import fetch from "node-fetch";
 import fs from "fs";
 import path from "path";
+import gTTS from "google-tts-api";
 
 const { Client, LocalAuth, MessageMedia } = pkg;
 
@@ -42,19 +43,19 @@ client.on("ready", () => {
   console.log("✅ WhatsApp Bot is ready!");
 });
 
-// Generate NoteGPT TTS
-async function generateTTS(text) {
+// Generate Google TTS audio
+async function generateTTS(text, lang = "en") {
   try {
-    // NoteGPT TTS URL (female voice, default)
-    const ttsUrl = `https://notegpt.io/api/tts?voice=female&text=${encodeURIComponent(text)}`;
+    const url = gTTS.getAudioUrl(text, {
+      lang: lang,
+      slow: false,
+      host: "https://translate.google.com",
+    });
 
-    const res = await fetch(ttsUrl);
+    const res = await fetch(url);
     if (!res.ok) throw new Error(`TTS failed with status ${res.status}`);
 
-    const arrayBuffer = await res.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
-
-    // Save temporary audio file
+    const buffer = Buffer.from(await res.arrayBuffer());
     const fileName = `./temp_${Date.now()}.mp3`;
     fs.writeFileSync(fileName, buffer);
     return fileName;
@@ -107,7 +108,7 @@ User message: "${msg.body}"
       console.log(`✅ Replied: ${reply}`);
 
       // Generate TTS and send voice note
-      const audioFile = await generateTTS(reply);
+      const audioFile = await generateTTS(reply, "en"); // "hi" for Hindi
       if (audioFile) {
         const media = MessageMedia.fromFilePath(audioFile);
         await msg.reply(media);
