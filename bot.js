@@ -94,7 +94,7 @@ client.on("message", async (msg) => {
       return;
     }
 
-    if (count > 20) {
+    if (count > 500) {
       await msg.reply("⚠️ Max 10 messages at a time to stay safe!");
       return;
     }
