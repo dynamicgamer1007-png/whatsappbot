@@ -178,18 +178,18 @@ async function generatePitch(businessName, businessType, onlinePresence) {
       ? "They have a website but might benefit from a mobile app."
       : "Their online presence is unclear.";
 
-    const prompt = `You are a professional Flutter developer reaching out to local businesses.
+    const prompt = `You are a professional Flutter & web developer reaching out to local businesses.
 
 Business Name: ${businessName}
 Business Type: ${businessType}
 Online Status: ${websiteStatus}
 Your Name: Adesh
-Your Skills: Flutter Developer (Mobile Apps), Web Development
+Your Skills: Mobile App Developer, Web Development
 
 Write a short, personalized WhatsApp message (max 120 words) that:
 1. Greets them warmly and mentions their business by name
 2. Briefly explains how a mobile app/website could help their business grow (tailor this based on their online status)
-3. Mentions you're a local developer in Allahabad
+3. Mentions you're a Web & app developer
 4. Includes a soft call-to-action (not pushy)
 5. Sounds genuine and conversational (not salesy)
 
@@ -338,6 +338,8 @@ async function generateLeads(businessType, location, msg) {
 // Handle messages
 client.on("message", async (msg) => {
   console.log(`🔥 MESSAGE: "${msg.body}" FROM: ${msg.from}`);
+  
+  // CRITICAL: Ignore all messages sent by the bot itself
   if (msg.fromMe || msg.from === "status@broadcast") return;
 
   const chat = await msg.getChat();
@@ -646,7 +648,30 @@ client.on("message", async (msg) => {
   // 🔹 If bot is OFF, ignore other messages
   if (!botActive) return;
 
-  // 🔹 AI reply using Gemini
+  // 🔹 Ignore empty messages or messages without text
+  if (!msg.body || msg.body.trim() === "") {
+    console.log("⏭️ Ignored empty message");
+    return;
+  }
+
+  // 🔹 Only respond to messages that are NOT from numbers we just contacted
+  // This prevents the bot from responding to its own outgoing messages
+  const messageFrom = msg.from.replace("@c.us", "");
+  const recentlyContacted = leads
+    .filter(l => l.status === "contacted" && l.contactedAt)
+    .filter(l => {
+      const contactTime = new Date(l.contactedAt).getTime();
+      const now = Date.now();
+      return (now - contactTime) < 60000; // Within last 60 seconds
+    })
+    .some(l => l.phones.some(p => p.includes(messageFrom) || messageFrom.includes(p.replace(/[^0-9]/g, ""))));
+
+  if (recentlyContacted) {
+    console.log("⏭️ Ignored message from recently contacted lead");
+    return;
+  }
+
+  // 🔹 AI reply using Gemini (only for actual user messages in your chat)
   try {
     const response = await fetch(
       `https://generativelanguage.googleapis.com/v1/models/gemini-2.0-flash:generateContent?key=${GEMINI_KEY}`,
