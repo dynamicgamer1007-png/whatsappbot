@@ -95,8 +95,8 @@ async function searchBusinesses(query, location = "Allahabad") {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        q: `${query} in ${location} contact number -website -app`,
-        num: 10,
+        q: `${query} in ${location} contact number phone -website -app`,
+        num: 30, // Increased to get more results
       }),
     });
 
@@ -261,14 +261,22 @@ async function generateLeads(businessType, location, msg) {
 
   let newLeads = 0;
   let skippedDuplicates = 0;
+  let skippedNoPhone = 0;
+  const targetLeads = 10; // Target at least 10 leads
 
   for (const result of results) {
+    // Stop if we've found enough leads
+    if (newLeads >= targetLeads) break;
+
     const businessName = result.title;
     const snippet = result.snippet || "";
     const link = result.link || "";
     const phones = extractPhoneNumbers(snippet);
 
-    if (phones.length === 0) continue;
+    if (phones.length === 0) {
+      skippedNoPhone++;
+      continue;
+    }
 
     // Check for duplicates with improved algorithm
     if (isDuplicateLead(businessName, phones)) {
@@ -277,7 +285,10 @@ async function generateLeads(businessType, location, msg) {
       continue;
     }
 
-    await msg.reply(`🔎 Analyzing: ${businessName}...`);
+    // Show progress every 3 leads
+    if ((newLeads + 1) % 3 === 0) {
+      await msg.reply(`🔎 Processing lead ${newLeads + 1}/${targetLeads}...`);
+    }
 
     // Check online presence
     const onlinePresence = await checkOnlinePresence(businessName, snippet, link);
@@ -313,6 +324,9 @@ async function generateLeads(businessType, location, msg) {
   response += `📊 New leads found: ${newLeads}\n`;
   if (skippedDuplicates > 0) {
     response += `⏭️ Skipped duplicates: ${skippedDuplicates}\n`;
+  }
+  if (skippedNoPhone > 0) {
+    response += `📵 No phone found: ${skippedNoPhone}\n`;
   }
   response += `📈 Total leads: ${leads.length}\n\n`;
   response += `💡 Use /viewleads to see them\n`;
@@ -475,6 +489,7 @@ client.on("message", async (msg) => {
         ? `${formattedNumber}@c.us`
         : `91${formattedNumber}@c.us`;
 
+      // Send the pitch directly without any bot interference
       await client.sendMessage(whatsappNumber, lead.pitch);
       
       // Update lead status
