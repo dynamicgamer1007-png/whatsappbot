@@ -124,7 +124,7 @@ async function generatePitch(businessName, businessType) {
 
 Business Name: ${businessName}
 Business Type: ${businessType}
-Your Name: [Your Name]
+Your Name: Adesh
 Your Skills: Flutter Developer (Mobile Apps), Web Development
 
 Write a short, personalized WhatsApp message (max 120 words) that:
