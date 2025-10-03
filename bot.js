@@ -117,19 +117,78 @@ function extractPhoneNumbers(text) {
   return [...new Set(matches.map(num => num.replace(/[\s-]/g, "")))];
 }
 
-// Generate personalized pitch using Gemini
-async function generatePitch(businessName, businessType) {
+// Check if business has website/app using AI
+async function checkOnlinePresence(businessName, snippet, link) {
   try {
+    const prompt = `You are analyzing a business's online presence.
+
+Business Name: ${businessName}
+Snippet: ${snippet}
+Link: ${link}
+
+Based on this information, determine:
+1. Does this business likely have a professional website? (yes/no/unclear)
+2. Does this business likely have a mobile app? (yes/no/unclear)
+3. Brief reason (max 15 words)
+
+Respond in this exact format:
+Website: [yes/no/unclear]
+App: [yes/no/unclear]
+Reason: [brief reason]`;
+
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1/models/gemini-2.0-flash:generateContent?key=${GEMINI_KEY}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: { temperature: 0.3, maxOutputTokens: 100 },
+        }),
+      }
+    );
+
+    const data = await response.json();
+    const result = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+    
+    if (!result) return { hasWebsite: "unclear", hasApp: "unclear", reason: "Unable to analyze" };
+
+    // Parse the response
+    const websiteMatch = result.match(/Website:\s*(yes|no|unclear)/i);
+    const appMatch = result.match(/App:\s*(yes|no|unclear)/i);
+    const reasonMatch = result.match(/Reason:\s*(.+)/i);
+
+    return {
+      hasWebsite: websiteMatch ? websiteMatch[1].toLowerCase() : "unclear",
+      hasApp: appMatch ? appMatch[1].toLowerCase() : "unclear",
+      reason: reasonMatch ? reasonMatch[1].trim() : "No details available"
+    };
+  } catch (err) {
+    console.error("❌ Online presence check error:", err.message);
+    return { hasWebsite: "unclear", hasApp: "unclear", reason: "Analysis failed" };
+  }
+}
+
+// Generate personalized pitch using Gemini
+async function generatePitch(businessName, businessType, onlinePresence) {
+  try {
+    const websiteStatus = onlinePresence.hasWebsite === "no" 
+      ? "They don't seem to have a professional website."
+      : onlinePresence.hasWebsite === "yes"
+      ? "They have a website but might benefit from a mobile app."
+      : "Their online presence is unclear.";
+
     const prompt = `You are a professional Flutter developer reaching out to local businesses.
 
 Business Name: ${businessName}
 Business Type: ${businessType}
+Online Status: ${websiteStatus}
 Your Name: Adesh
 Your Skills: Flutter Developer (Mobile Apps), Web Development
 
 Write a short, personalized WhatsApp message (max 120 words) that:
 1. Greets them warmly and mentions their business by name
-2. Briefly explains how a mobile app/website could help their business grow
+2. Briefly explains how a mobile app/website could help their business grow (tailor this based on their online status)
 3. Mentions you're a local developer in Allahabad
 4. Includes a soft call-to-action (not pushy)
 5. Sounds genuine and conversational (not salesy)
@@ -156,6 +215,39 @@ Keep it professional but friendly. No emojis except one at the end.`;
   }
 }
 
+// Generate shorter, more readable lead IDs
+function generateLeadId() {
+  return Math.floor(100000 + Math.random() * 900000); // 6-digit ID
+}
+
+// Normalize business name for comparison (remove special chars, lowercase, trim)
+function normalizeBusinessName(name) {
+  return name.toLowerCase()
+    .replace(/[^\w\s]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// Check if lead already exists (improved duplicate detection)
+function isDuplicateLead(businessName, phones) {
+  const normalizedName = normalizeBusinessName(businessName);
+  
+  return leads.some(existingLead => {
+    // Check name similarity
+    const existingNormalized = normalizeBusinessName(existingLead.name);
+    const nameSimilar = existingNormalized === normalizedName || 
+                        existingNormalized.includes(normalizedName) ||
+                        normalizedName.includes(existingNormalized);
+    
+    // Check phone overlap
+    const phoneOverlap = phones.some(p => 
+      existingLead.phones.some(ep => ep.includes(p) || p.includes(ep))
+    );
+    
+    return nameSimilar || phoneOverlap;
+  });
+}
+
 // Lead generation command
 async function generateLeads(businessType, location, msg) {
   await msg.reply(`🔍 Searching for ${businessType} in ${location}...`);
@@ -168,50 +260,65 @@ async function generateLeads(businessType, location, msg) {
   }
 
   let newLeads = 0;
+  let skippedDuplicates = 0;
 
   for (const result of results) {
     const businessName = result.title;
     const snippet = result.snippet || "";
+    const link = result.link || "";
     const phones = extractPhoneNumbers(snippet);
 
     if (phones.length === 0) continue;
 
-    // Check if lead already exists
-    const existingLead = leads.find(
-      l => l.name === businessName || phones.some(p => l.phones.includes(p))
-    );
-    
-    if (existingLead) continue;
+    // Check for duplicates with improved algorithm
+    if (isDuplicateLead(businessName, phones)) {
+      skippedDuplicates++;
+      console.log(`⏭️ Skipped duplicate: ${businessName}`);
+      continue;
+    }
+
+    await msg.reply(`🔎 Analyzing: ${businessName}...`);
+
+    // Check online presence
+    const onlinePresence = await checkOnlinePresence(businessName, snippet, link);
 
     // Generate personalized pitch
-    const pitch = await generatePitch(businessName, businessType);
+    const pitch = await generatePitch(businessName, businessType, onlinePresence);
     if (!pitch) continue;
 
     const lead = {
-      id: Date.now() + Math.random(),
+      id: generateLeadId(),
       name: businessName,
       type: businessType,
       location: location,
       phones: phones,
       pitch: pitch,
-      source: result.link || "N/A",
+      source: link,
+      hasWebsite: onlinePresence.hasWebsite,
+      hasApp: onlinePresence.hasApp,
+      onlinePresenceReason: onlinePresence.reason,
       addedAt: new Date().toISOString(),
-      status: "pending", // pending, contacted, interested, rejected
+      status: "pending",
     };
 
     leads.push(lead);
     newLeads++;
 
-    await new Promise(resolve => setTimeout(resolve, 1000)); // Rate limit
+    await new Promise(resolve => setTimeout(resolve, 1500)); // Rate limit
   }
 
   saveLeads();
-  await msg.reply(
-    `✅ Found ${newLeads} new leads!\n\n` +
-    `Total leads: ${leads.length}\n` +
-    `Use /viewleads to see them\n` +
-    `Use /sendlead <id> to send a pitch`
-  );
+  
+  let response = `✅ Search complete!\n\n`;
+  response += `📊 New leads found: ${newLeads}\n`;
+  if (skippedDuplicates > 0) {
+    response += `⏭️ Skipped duplicates: ${skippedDuplicates}\n`;
+  }
+  response += `📈 Total leads: ${leads.length}\n\n`;
+  response += `💡 Use /viewleads to see them\n`;
+  response += `💡 Use /sendlead <id> to send pitch`;
+  
+  await msg.reply(response);
 }
 
 // Handle messages
@@ -293,24 +400,28 @@ client.on("message", async (msg) => {
     let response = `📊 *${status.toUpperCase()} LEADS (${filtered.length})*\n\n`;
     
     filtered.slice(0, 10).forEach((lead, idx) => {
+      const websiteIcon = lead.hasWebsite === "yes" ? "🌐" : lead.hasWebsite === "no" ? "❌" : "❓";
+      const appIcon = lead.hasApp === "yes" ? "📱" : lead.hasApp === "no" ? "❌" : "❓";
+      
       response += `*${idx + 1}. ${lead.name}*\n`;
       response += `   Type: ${lead.type}\n`;
+      response += `   Online: ${websiteIcon} Website | ${appIcon} App\n`;
       response += `   Phones: ${lead.phones.join(", ")}\n`;
-      response += `   ID: ${lead.id}\n\n`;
+      response += `   📋 ID: *${lead.id}*\n\n`;
     });
 
     if (filtered.length > 10) {
       response += `\n... and ${filtered.length - 10} more\n`;
     }
 
-    response += `\n💡 Use /leadinfo <id> to see full details`;
+    response += `\n💡 Copy the ID and use:\n/leadinfo <id> for details\n/sendlead <id> to send pitch`;
     await msg.reply(response);
     return;
   }
 
   // 🔹 /leadinfo command
   if (msg.body.startsWith("/leadinfo")) {
-    const leadId = parseFloat(msg.body.split(" ")[1]);
+    const leadId = parseInt(msg.body.split(" ")[1]);
     const lead = leads.find(l => l.id === leadId);
 
     if (!lead) {
@@ -318,16 +429,24 @@ client.on("message", async (msg) => {
       return;
     }
 
+    const websiteStatus = lead.hasWebsite === "yes" ? "✅ Yes" : lead.hasWebsite === "no" ? "❌ No" : "❓ Unclear";
+    const appStatus = lead.hasApp === "yes" ? "✅ Yes" : lead.hasApp === "no" ? "❌ No" : "❓ Unclear";
+
     const response = 
       `📋 *LEAD DETAILS*\n\n` +
       `*Name:* ${lead.name}\n` +
       `*Type:* ${lead.type}\n` +
       `*Location:* ${lead.location}\n` +
-      `*Phones:* ${lead.phones.join(", ")}\n` +
+      `*Phones:* ${lead.phones.join(", ")}\n\n` +
+      `*ONLINE PRESENCE:*\n` +
+      `🌐 Website: ${websiteStatus}\n` +
+      `📱 App: ${appStatus}\n` +
+      `💡 ${lead.onlinePresenceReason}\n\n` +
       `*Status:* ${lead.status}\n` +
       `*Added:* ${new Date(lead.addedAt).toLocaleDateString()}\n\n` +
       `*PERSONALIZED PITCH:*\n${lead.pitch}\n\n` +
-      `💡 Use /sendlead ${lead.id} to send this pitch`;
+      `📋 *Lead ID: ${lead.id}*\n\n` +
+      `💡 To send this pitch, copy the ID above and use:\n/sendlead ${lead.id}`;
 
     await msg.reply(response);
     return;
@@ -335,7 +454,7 @@ client.on("message", async (msg) => {
 
   // 🔹 /sendlead command (sends pitch to lead)
   if (msg.body.startsWith("/sendlead")) {
-    const leadId = parseFloat(msg.body.split(" ")[1]);
+    const leadId = parseInt(msg.body.split(" ")[1]);
     const lead = leads.find(l => l.id === leadId);
 
     if (!lead) {
@@ -363,8 +482,36 @@ client.on("message", async (msg) => {
       lead.contactedAt = new Date().toISOString();
       saveLeads();
 
-      await msg.reply(`✅ Pitch sent successfully!\n\nLead marked as "contacted"`);
+      await msg.reply(`✅ Pitch sent successfully!\n\nLead marked as "contacted"\n\n💡 Update status using:\n/updatestatus ${lead.id} <status>`);
       console.log(`✅ Pitch sent to ${lead.name} at ${whatsappNumber}`);
+    } catch (err) {
+      console.error("❌ Send error:", err.message);
+      await msg.reply(`⚠️ Failed to send: ${err.message}`);
+    }
+    return;
+  }
+
+  // 🔹 /forcecontact command
+  if (msg.body.startsWith("/forcecontact")) {
+    const leadId = parseInt(msg.body.split(" ")[1]);
+    const lead = leads.find(l => l.id === leadId);
+
+    if (!lead) {
+      await msg.reply("❌ Lead not found.");
+      return;
+    }
+
+    await msg.reply(`📤 Re-sending pitch to ${lead.name}...`);
+
+    try {
+      const formattedNumber = lead.phones[0].replace(/[^0-9]/g, "");
+      const whatsappNumber = formattedNumber.startsWith("91") 
+        ? `${formattedNumber}@c.us`
+        : `91${formattedNumber}@c.us`;
+
+      await client.sendMessage(whatsappNumber, lead.pitch);
+      await msg.reply(`✅ Pitch re-sent successfully!`);
+      console.log(`✅ Force-contacted ${lead.name}`);
     } catch (err) {
       console.error("❌ Send error:", err.message);
       await msg.reply(`⚠️ Failed to send: ${err.message}`);
@@ -375,7 +522,7 @@ client.on("message", async (msg) => {
   // 🔹 /updatestatus command
   if (msg.body.startsWith("/updatestatus")) {
     const parts = msg.body.split(" ");
-    const leadId = parseFloat(parts[1]);
+    const leadId = parseInt(parts[1]);
     const newStatus = parts[2];
 
     const lead = leads.find(l => l.id === leadId);
@@ -392,7 +539,7 @@ client.on("message", async (msg) => {
 
     lead.status = newStatus;
     saveLeads();
-    await msg.reply(`✅ Lead status updated to: ${newStatus}`);
+    await msg.reply(`✅ Lead "${lead.name}" status updated to: *${newStatus}*`);
     return;
   }
 
@@ -403,15 +550,27 @@ client.on("message", async (msg) => {
     const contacted = leads.filter(l => l.status === "contacted").length;
     const interested = leads.filter(l => l.status === "interested").length;
     const rejected = leads.filter(l => l.status === "rejected").length;
+    
+    const withWebsite = leads.filter(l => l.hasWebsite === "yes").length;
+    const withoutWebsite = leads.filter(l => l.hasWebsite === "no").length;
+    const withApp = leads.filter(l => l.hasApp === "yes").length;
+    const withoutApp = leads.filter(l => l.hasApp === "no").length;
 
     const response = 
       `📊 *LEAD STATISTICS*\n\n` +
+      `*Status Breakdown:*\n` +
       `Total Leads: ${total}\n` +
       `├ Pending: ${pending}\n` +
       `├ Contacted: ${contacted}\n` +
       `├ Interested: ${interested}\n` +
       `└ Rejected: ${rejected}\n\n` +
-      `Conversion Rate: ${total > 0 ? ((interested / contacted) * 100).toFixed(1) : 0}%`;
+      `*Online Presence:*\n` +
+      `🌐 Has Website: ${withWebsite}\n` +
+      `❌ No Website: ${withoutWebsite}\n` +
+      `📱 Has App: ${withApp}\n` +
+      `❌ No App: ${withoutApp}\n\n` +
+      `*Conversion:*\n` +
+      `Response Rate: ${contacted > 0 ? ((interested / contacted) * 100).toFixed(1) : 0}%`;
 
     await msg.reply(response);
     return;
@@ -436,7 +595,8 @@ client.on("message", async (msg) => {
       `*Examples:*\n` +
       `/findleads gyms Allahabad\n` +
       `/viewleads pending\n` +
-      `/sendlead 1234567890`;
+      `/leadinfo 123456\n` +
+      `/sendlead 123456`;
 
     await msg.reply(helpText);
     return;
