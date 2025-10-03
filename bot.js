@@ -117,6 +117,37 @@ function extractPhoneNumbers(text) {
   return [...new Set(matches.map(num => num.replace(/[\s-]/g, "")))];
 }
 
+// Clean business name (remove extra junk words)
+function cleanBusinessName(name) {
+  // Remove common noise words and patterns
+  const cleanedName = name
+    .replace(/\s*-\s*Google.*$/i, '') // Remove "- Google Search" etc
+    .replace(/\s*\|\s*.*$/, '') // Remove everything after pipe |
+    .replace(/\s*›\s*.*$/, '') // Remove everything after ›
+    .replace(/\s*»\s*.*$/, '') // Remove everything after »
+    .replace(/^.*?:\s*/, '') // Remove "Category: Business Name"
+    .replace(/\s+in\s+(Prayagraj|Allahabad|India).*$/i, '') // Remove location suffixes
+    .replace(/\s*\([^)]*contact[^)]*\)/gi, '') // Remove (contact info)
+    .replace(/\s*\([^)]*phone[^)]*\)/gi, '') // Remove (phone info)
+    .replace(/\s*\([^)]*\d{4,}\)/g, '') // Remove (numbers)
+    .replace(/\s+-\s+.*$/, '') // Remove everything after dash
+    .replace(/\s*–\s*.*$/, '') // Remove everything after en-dash
+    .replace(/\s+Reviews?$/i, '') // Remove "Reviews"
+    .replace(/\s+Rating$/i, '') // Remove "Rating"
+    .replace(/\s*\d+\s*stars?$/i, '') // Remove "4 stars"
+    .replace(/\s*\d+\/\d+$/i, '') // Remove ratings like "4/5"
+    .replace(/\s+\.\.\.$/, '') // Remove trailing dots
+    .trim();
+
+  // If the name is too long, try to get just the core business name
+  if (cleanedName.length > 60) {
+    const parts = cleanedName.split(/[-–|›»,]/);
+    return parts[0].trim();
+  }
+
+  return cleanedName;
+}
+
 // Check if business has website/app using AI
 async function checkOnlinePresence(businessName, snippet, link) {
   try {
@@ -178,18 +209,18 @@ async function generatePitch(businessName, businessType, onlinePresence) {
       ? "They have a website but might benefit from a mobile app."
       : "Their online presence is unclear.";
 
-    const prompt = `You are a professional Flutter & web developer reaching out to local businesses.
+    const prompt = `You are a professional Flutter developer reaching out to local businesses.
 
 Business Name: ${businessName}
 Business Type: ${businessType}
 Online Status: ${websiteStatus}
 Your Name: Adesh
-Your Skills: Mobile App Developer, Web Development
+Your Skills: Flutter Developer (Mobile Apps), Web Development
 
 Write a short, personalized WhatsApp message (max 120 words) that:
 1. Greets them warmly and mentions their business by name
 2. Briefly explains how a mobile app/website could help their business grow (tailor this based on their online status)
-3. Mentions you're a Web & app developer
+3. Mentions you're a local developer in Allahabad
 4. Includes a soft call-to-action (not pushy)
 5. Sounds genuine and conversational (not salesy)
 
@@ -268,7 +299,7 @@ async function generateLeads(businessType, location, msg) {
     // Stop if we've found enough leads
     if (newLeads >= targetLeads) break;
 
-    const businessName = result.title;
+    const businessName = cleanBusinessName(result.title); // Clean the business name
     const snippet = result.snippet || "";
     const link = result.link || "";
     const phones = extractPhoneNumbers(snippet);
@@ -508,6 +539,97 @@ client.on("message", async (msg) => {
     return;
   }
 
+  // 🔹 /bulksend command (sends pitches to multiple leads)
+  if (msg.body.startsWith("/bulksend")) {
+    const args = msg.body.split(" ").slice(1);
+    
+    if (args.length === 0) {
+      await msg.reply(
+        "❌ Usage: /bulksend <status> [limit]\n\n" +
+        "Examples:\n" +
+        "• /bulksend pending - Send to all pending leads\n" +
+        "• /bulksend pending 5 - Send to first 5 pending leads\n\n" +
+        "⚠️ Note: There will be a 10-second delay between each message to avoid spam detection."
+      );
+      return;
+    }
+
+    const status = args[0];
+    const limit = args[1] ? parseInt(args[1]) : 999;
+
+    const validStatuses = ["pending", "interested"];
+    if (!validStatuses.includes(status)) {
+      await msg.reply(`❌ Can only bulk send to: ${validStatuses.join(", ")}`);
+      return;
+    }
+
+    const targetLeads = leads
+      .filter(l => l.status === status)
+      .slice(0, limit);
+
+    if (targetLeads.length === 0) {
+      await msg.reply(`📭 No ${status} leads found.`);
+      return;
+    }
+
+    await msg.reply(
+      `🚀 *BULK SEND STARTING*\n\n` +
+      `Sending to: ${targetLeads.length} ${status} leads\n` +
+      `Delay: 10 seconds between each\n` +
+      `Estimated time: ~${Math.ceil(targetLeads.length * 10 / 60)} minutes\n\n` +
+      `⚠️ Do NOT turn off bot during this process!`
+    );
+
+    let sent = 0;
+    let failed = 0;
+
+    for (let i = 0; i < targetLeads.length; i++) {
+      const lead = targetLeads[i];
+      
+      try {
+        const formattedNumber = lead.phones[0].replace(/[^0-9]/g, "");
+        const whatsappNumber = formattedNumber.startsWith("91") 
+          ? `${formattedNumber}@c.us`
+          : `91${formattedNumber}@c.us`;
+
+        await client.sendMessage(whatsappNumber, lead.pitch);
+        
+        // Update lead status
+        lead.status = "contacted";
+        lead.contactedAt = new Date().toISOString();
+        sent++;
+
+        console.log(`✅ [${i + 1}/${targetLeads.length}] Sent to ${lead.name}`);
+
+        // Progress update every 5 messages
+        if ((i + 1) % 5 === 0) {
+          await msg.reply(`📊 Progress: ${i + 1}/${targetLeads.length} sent`);
+        }
+
+        // Wait 10 seconds between messages (anti-spam)
+        if (i < targetLeads.length - 1) {
+          await new Promise(resolve => setTimeout(resolve, 10000));
+        }
+
+      } catch (err) {
+        console.error(`❌ Failed to send to ${lead.name}:`, err.message);
+        failed++;
+      }
+    }
+
+    saveLeads();
+
+    await msg.reply(
+      `✅ *BULK SEND COMPLETE*\n\n` +
+      `✅ Sent: ${sent}\n` +
+      `❌ Failed: ${failed}\n` +
+      `📊 Total: ${targetLeads.length}\n\n` +
+      `All contacted leads have been updated.\n` +
+      `Use /stats to see updated statistics.`
+    );
+    return;
+  }
+
   // 🔹 /forcecontact command
   if (msg.body.startsWith("/forcecontact")) {
     const leadId = parseInt(msg.body.split(" ")[1]);
@@ -593,6 +715,68 @@ client.on("message", async (msg) => {
     return;
   }
 
+  // 🔹 /clear command (delete all leads with confirmation)
+  if (msg.body.startsWith("/clear")) {
+    if (leads.length === 0) {
+      await msg.reply("📭 No leads to clear. Database is already empty.");
+      return;
+    }
+
+    const totalLeads = leads.length;
+    const pendingLeads = leads.filter(l => l.status === "pending").length;
+    const contactedLeads = leads.filter(l => l.status === "contacted").length;
+
+    await msg.reply(
+      `⚠️ *CONFIRM DELETION*\n\n` +
+      `You are about to delete:\n` +
+      `• Total: ${totalLeads} leads\n` +
+      `• Pending: ${pendingLeads}\n` +
+      `• Contacted: ${contactedLeads}\n\n` +
+      `⚠️ This action CANNOT be undone!\n\n` +
+      `Reply with */confirmclear* to proceed\n` +
+      `Reply with */cancel* to abort`
+    );
+    return;
+  }
+
+  // 🔹 /confirmclear command (actual deletion)
+  if (msg.body.startsWith("/confirmclear")) {
+    const deletedCount = leads.length;
+    
+    if (deletedCount === 0) {
+      await msg.reply("📭 No leads to delete.");
+      return;
+    }
+
+    // Backup before deletion
+    const backupFile = `leads_backup_${Date.now()}.json`;
+    try {
+      fs.writeFileSync(backupFile, JSON.stringify(leads, null, 2));
+      console.log(`💾 Backup created: ${backupFile}`);
+    } catch (err) {
+      console.error("⚠️ Backup failed:", err.message);
+    }
+
+    // Clear all leads
+    leads = [];
+    saveLeads();
+
+    await msg.reply(
+      `✅ *LEADS CLEARED*\n\n` +
+      `Deleted: ${deletedCount} leads\n` +
+      `Backup saved as: ${backupFile}\n\n` +
+      `Use /findleads to start fresh!`
+    );
+    console.log(`🗑️ Cleared ${deletedCount} leads`);
+    return;
+  }
+
+  // 🔹 /cancel command
+  if (msg.body.startsWith("/cancel")) {
+    await msg.reply("✅ Action cancelled. Your leads are safe.");
+    return;
+  }
+
   // 🔹 /help command
   if (msg.body.startsWith("/help")) {
     const helpText = 
@@ -602,8 +786,10 @@ client.on("message", async (msg) => {
       `/viewleads [status] - View all leads\n` +
       `/leadinfo <id> - View lead details\n` +
       `/sendlead <id> - Send pitch to lead\n` +
+      `/bulksend <status> [limit] - Send to multiple\n` +
       `/updatestatus <id> <status> - Update lead\n` +
-      `/stats - View statistics\n\n` +
+      `/stats - View statistics\n` +
+      `/clear - Delete all leads (with confirm)\n\n` +
       `*Bot Control:*\n` +
       `/on - Turn bot ON\n` +
       `/off - Turn bot OFF\n` +
@@ -613,7 +799,9 @@ client.on("message", async (msg) => {
       `/findleads gyms Allahabad\n` +
       `/viewleads pending\n` +
       `/leadinfo 123456\n` +
-      `/sendlead 123456`;
+      `/sendlead 123456\n` +
+      `/bulksend pending 10\n` +
+      `/clear → /confirmclear`;
 
     await msg.reply(helpText);
     return;
