@@ -1,5 +1,4 @@
 name: WhatsApp Bot
-
 on:
   push:
     branches:
@@ -9,23 +8,25 @@ on:
 jobs:
   run-bot:
     runs-on: ubuntu-latest
+    
     steps:
       # Checkout the repo
       - name: Checkout Repository
         uses: actions/checkout@v3
-
+      
       # Setup Node.js environment
       - name: Setup Node.js
         uses: actions/setup-node@v3
         with:
           node-version: 20
-
+      
       # Install dependencies
       - name: Install Dependencies
         run: npm install
-
-      # Run the WhatsApp bot
+      
+      # Run the WhatsApp bot with BOTH API keys
       - name: Start WhatsApp Bot
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          SERPER_API_KEY: ${{ secrets.SERPER_API_KEY }}
         run: npm start
